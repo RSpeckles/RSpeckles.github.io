@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+// citations https://www.geeksforgeeks.org/how-to-open-web-cam-in-javascript/
+// cite https://codepen.io/cassie-codes/pen/RJxGvK a tiny bit
+// https://bensonruan.com/how-to-access-webcam-and-take-photo-with-javascript/
+// learned a bit from https://raw.githubusercontent.com/ahmukoma/Color-Tracking-with-Javascript/master/js/jquery-3.2.1.js
+<html>
+<head>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            background-color: black;
+        }
+
+        h1 {
+            margin-top: 50px;
+            color: white;
+        }
+
+        p {
+            font-size: 20px;
+            color: red;
+        }
+
+        .video-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        #webcam {
+            margin-right: 20px;
+            width: 320px;
+            height: 240px;
+        }
+
+        #processed-video {
+            border: 2px solid #ccc;
+            border-radius: 5px;
+        }
+
+        .toggle-switch {
+            position: relative;
+            display: inline-block;
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 20px;
+            margin: 10px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            overflow: hidden;
+            transform: rotate(0);
+            transition: transform 0.5s;
+        }
+
+        .toggle-switch:hover {
+            animation: spin 1s infinite linear;
+        }
+
+        .toggle-switch.active:before {
+            animation: explode 0.5s linear;
+        }
+
+        @keyframes explode {
+            0% {
+                transform: scale(1);
+            }
+            100% {
+                transform: scale(10);
+                opacity: 0;
+            }
+        }
+
+        @keyframes spin {
+            0% {
+                transform: rotate(0);
+            }
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+
+        #speed {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            font-size: 35px;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+<h1>Webcam Tracking</h1>
+<p>Toggle Options:</p>
+<div class="toggle-switch" id="toggleTrailSwitch" onclick="toggleTrail()">Toggle Trail</div>
+<div class="toggle-switch" id="toggleCircleSwitch" onclick="toggleCircle()">Toggle Circle</div>
+<br>
+<div class="video-container">
+    <video id="webcam" autoplay playsinline></video>
+    <canvas id="processed-video"></canvas>
+</div>
+<div id="speed"></div>
+
+<script>
+    let videoElement;
+    let webcamStream;
+    let canvasElement;
+    let canvasContext;
+    let toggleTrailSwitch;
+    let toggleCircleSwitch;
+    let trailDots = [];
+    let circleRadius = 30;
+    // was going to use but 1.5x total dist works
+    let isTrailEnabled = true;
+    let isCircleEnabled = true;
+    let isYellowDetected = false;
+    let oldcx = 0;
+    let oldcy = 0;
+    let speed = 0;
+    let lastSpeedUpdate = Date.now();
+    const videoUpdateInterval = 1;
+    const rerunner = 100;
+
+    function startWebcam() {
+        videoElement = document.getElementById("webcam");
+        canvasElement = document.getElementById("processed-video");
+        canvasContext = canvasElement.getContext("2d");
+        toggleTrailSwitch = document.getElementById("toggleTrailSwitch");
+        toggleCircleSwitch = document.getElementById("toggleCircleSwitch");
+
+        // get camera
+        navigator.mediaDevices.getUserMedia({ video: true })
+            .then(function(stream) {
+                videoElement.srcObject = stream;
+                webcamStream = stream;
+
+                videoElement.onloadedmetadata = function() {
+                    canvasElement.width = videoElement.videoWidth;
+                    canvasElement.height = videoElement.videoHeight;
+                    // Automatically process video frames
+                    setInterval(processVideo, videoUpdateInterval);
+                };
+                // from github
+            })
+            .catch(function(error) {
+                console.log('e');
+            });
+    }
+
+    function toggleTrail() {
+        isTrailEnabled = !isTrailEnabled;
+        toggleTrailSwitch.classList.toggle("active");
+    }
+
+    function toggleCircle() {
+        isCircleEnabled = !isCircleEnabled;
+        toggleCircleSwitch.classList.toggle("active");
+    }
+    // taken from geeksforgeeks
+
+    function processVideo() {
+        if (videoElement.paused || videoElement.ended) {
+            return;
+        }
+
+        canvasContext.drawImage(videoElement, 0, 0, canvasElement.width, canvasElement.height);
+        let imageData = canvasContext.getImageData(0, 0, canvasElement.width, canvasElement.height);
+        let data = imageData.data;
+
+        let yellowPoints = [];
+
+        for (let i = 0; i < data.length; i += 4) {
+            let r = data[i];
+            let g = data[i + 1];
+            let b = data[i + 2];
+            let a = data[i + 3];
+
+            // DONT TOUCH THIS I SPENT FORVEER FINDING THE COLOR
+            if (r > 150 && g > 150 && b < 100) {
+                let x = (i / 4) % canvasElement.width;
+                let y = Math.floor((i / 4) / canvasElement.width);
+                yellowPoints.push({x: x, y: y});
+            }
+        }
+
+        isYellowDetected = yellowPoints.length > 0;
+
+        if (isYellowDetected || isTrailEnabled || isCircleEnabled) {
+            // Calculate
+            let minX = Number.MAX_VALUE
+            let minY = Number.MAX_VALUE
+            let maxX = Number.MIN_VALUE
+            let maxY = Number.MIN_VALUE;
+
+            yellowPoints.forEach(function(point) {
+                minX = Math.min(minX, point.x);
+                minY = Math.min(minY, point.y);
+                maxX = Math.max(maxX, point.x);
+                maxY = Math.max(maxY, point.y);
+            });
+
+            let mx = (minX + maxX) / 2;
+            let my = (minY + maxY) / 2;
+            let circleSize = Math.max(Math.abs(mx - minX), Math.abs(my - minY));
+
+            // Clear the canvas
+            canvasContext.clearRect(0, 0, canvasElement.width, canvasElement.height);
+
+            // Draw the webcam video
+            canvasContext.drawImage(videoElement, 0, 0, canvasElement.width, canvasElement.height);
+
+            if (isTrailEnabled==true) {
+                trailDots.push({ x: mx, y: my });
+
+                // num of dots
+                if (trailDots.length > 100) {
+                    trailDots.shift();
+                }
+
+                for (let i = 0; i < trailDots.length; i++) {
+                    let dot = trailDots[i];
+                    canvasContext.fillStyle = "black";
+                    canvasContext.beginPath();
+                    canvasContext.arc(dot.x, dot.y, 2, 0, 2 * Math.PI);
+                    canvasContext.fill();
+                    canvasContext.closePath();
+                    // idk why last part important but....
+                }
+            }
+
+            if (isCircleEnabled==true) {
+                //  used code cover the circle that layers te object
+                let gradient = canvasContext.createLinearGradient(mx - circleSize, my - circleSize, mx + circleSize, my + circleSize);
+                gradient.addColorStop(0, "red");
+                gradient.addColorStop(1 / 6, "orange");
+                gradient.addColorStop(2 / 6, "yellow");
+                gradient.addColorStop(3 / 6, "green");
+                gradient.addColorStop(4 / 6, "blue");
+                gradient.addColorStop(5 / 6, "indigo");
+                gradient.addColorStop(1, "violet");
+                canvasContext.strokeStyle = gradient;
+                canvasContext.lineWidth = 5;
+                canvasContext.beginPath();
+                canvasContext.arc(mx, my, circleSize, 0, 2 * Math.PI);
+                canvasContext.stroke();
+                canvasContext.closePath();
+            }
+
+            let currentTime = Date.now();
+            let timeDiff = currentTime - lastSpeedUpdate;
+            if (timeDiff >= rerunner) {
+                let displacementX = Math.abs(mx - oldcx);
+                let displacementY = Math.abs(my - oldcy);
+                let distance = Math.sqrt(Math.pow(displacementX, 2) + Math.pow(displacementY, 2));
+                speed = distance / timeDiff * 1000; // pixels per second
+                lastSpeedUpdate = currentTime;
+                oldcx = mx;
+                oldcy = my;
+            }
+        }
+
+        document.getElementById("speed").textContent = speed.toFixed(2) + " pixels per second";
+    }
+
+    startWebcam();
+</script>
+</body>
+</html>
